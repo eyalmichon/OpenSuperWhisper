@@ -185,10 +185,9 @@ class ContentViewModel: ObservableObject {
         Task { [weak self] in
             guard let self = self else { return }
             
-            if let tempURL = await self.recorder.stopRecording() {
+            if let (tempURL, duration) = await self.recorder.stopRecording() {
                 do {
                     print("start decoding...")
-                    let duration = await AudioUtil.audioDuration(url: tempURL)
                     let text = try await transcriptionService.transcribeAudio(url: tempURL, settings: Settings())
 
                     if text.isEmpty {

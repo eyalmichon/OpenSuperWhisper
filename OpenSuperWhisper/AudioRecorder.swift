@@ -212,7 +212,7 @@ class AudioRecorder: NSObject, ObservableObject {
         }
     }
     
-    func stopRecording() async -> URL? {
+    func stopRecording() async -> (url: URL, duration: TimeInterval)? {
         await withCheckedContinuation { continuation in
             workQueue.async {
                 guard let recorder = self.audioRecorder, let url = self.currentRecordingURL else {
@@ -229,6 +229,9 @@ class AudioRecorder: NSObject, ObservableObject {
                 self.updateRecordingState(isRecording: false, isConnecting: false)
                 
                 self.workQueue.asyncAfter(deadline: .now() + Self.stopTailDuration) {
+                    // Capture the length from the recorder itself: reading it back
+                    // from the file (AVURLAsset) right after stop() races with file
+                    // finalization and returns 0.
                     let recordedDuration = recorder.currentTime
                     recorder.stop()
                     // A new recording may have started during the tail window;
@@ -241,7 +244,7 @@ class AudioRecorder: NSObject, ObservableObject {
                         try? FileManager.default.removeItem(at: url)
                         continuation.resume(returning: nil)
                     } else {
-                        continuation.resume(returning: url)
+                        continuation.resume(returning: (url, recordedDuration))
                     }
                 }
             }
@@ -254,7 +257,7 @@ class AudioRecorder: NSObject, ObservableObject {
         }
     }
     
-    private func performStop(discard: Bool) -> URL? {
+    private func performStop(discard: Bool) -> (url: URL, duration: TimeInterval)? {
         let recordedDuration = audioRecorder?.currentTime ?? 0
         audioRecorder?.stop()
         audioRecorder = nil
@@ -269,7 +272,7 @@ class AudioRecorder: NSObject, ObservableObject {
             try? FileManager.default.removeItem(at: url)
             return nil
         }
-        return url
+        return (url, recordedDuration)
     }
     
     #if os(macOS)
