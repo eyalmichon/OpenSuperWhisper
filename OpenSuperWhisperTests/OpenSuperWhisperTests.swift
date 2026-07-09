@@ -1690,6 +1690,28 @@ final class EscapeCancelConfirmationTests: XCTestCase {
 
 final class TextUtilTests: XCTestCase {
 
+    // MARK: - wordCount
+
+    func testWordCount_simpleText() {
+        XCTAssertEqual(TextUtil.wordCount("hello world"), 2)
+    }
+
+    func testWordCount_emptyString() {
+        XCTAssertEqual(TextUtil.wordCount(""), 0)
+    }
+
+    func testWordCount_multipleSpaces() {
+        XCTAssertEqual(TextUtil.wordCount("hello   world"), 2)
+    }
+
+    func testWordCount_newlines() {
+        XCTAssertEqual(TextUtil.wordCount("hello\nworld"), 2)
+    }
+
+    func testWordCount_leadingTrailingWhitespace() {
+        XCTAssertEqual(TextUtil.wordCount("  hi there  "), 2)
+    }
+
     // MARK: - formatDuration
 
     func testFormatDuration_zero() {

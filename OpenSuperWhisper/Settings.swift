@@ -93,6 +93,24 @@ class SettingsViewModel: ObservableObject {
             AppPreferences.shared.showTimestamps = showTimestamps
         }
     }
+
+    @Published var showRecordingDateTime: Bool {
+        didSet {
+            AppPreferences.shared.showRecordingDateTime = showRecordingDateTime
+        }
+    }
+
+    @Published var showRecordingDuration: Bool {
+        didSet {
+            AppPreferences.shared.showRecordingDuration = showRecordingDuration
+        }
+    }
+
+    @Published var showWordCount: Bool {
+        didSet {
+            AppPreferences.shared.showWordCount = showWordCount
+        }
+    }
     
     @Published var temperature: Double {
         didSet {
@@ -209,6 +227,9 @@ class SettingsViewModel: ObservableObject {
         self.selectedLanguage = prefs.whisperLanguage
         self.suppressBlankAudio = prefs.suppressBlankAudio
         self.showTimestamps = prefs.showTimestamps
+        self.showRecordingDateTime = prefs.showRecordingDateTime
+        self.showRecordingDuration = prefs.showRecordingDuration
+        self.showWordCount = prefs.showWordCount
         self.temperature = prefs.temperature
         self.noSpeechThreshold = prefs.noSpeechThreshold
         self.initialPrompt = prefs.initialPrompt
@@ -942,6 +963,61 @@ struct SettingsView: View {
                             }
                             Spacer()
                             Toggle("", isOn: $viewModel.addSpaceAfterSentence)
+                                .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
+                                .labelsHidden()
+                        }
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.controlBackgroundColor).opacity(0.3))
+                .cornerRadius(12)
+
+                // History List
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("History List")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Show Date & Time")
+                                    .font(.subheadline)
+                                Text("Display the date and time of each recording in the history list")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $viewModel.showRecordingDateTime)
+                                .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
+                                .labelsHidden()
+                        }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Show Recording Duration")
+                                    .font(.subheadline)
+                                Text("Display the length of each recording in the history list")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $viewModel.showRecordingDuration)
+                                .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
+                                .labelsHidden()
+                        }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Show Word Count")
+                                    .font(.subheadline)
+                                Text("Display the number of words in each transcription")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $viewModel.showWordCount)
                                 .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
                                 .labelsHidden()
                         }

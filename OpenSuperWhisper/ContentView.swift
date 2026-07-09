@@ -733,6 +733,9 @@ struct RecordingRow: View {
     @State private var showTranscription = false
     @State private var isHovered = false
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("showRecordingDateTime") private var showRecordingDateTime = true
+    @AppStorage("showRecordingDuration") private var showRecordingDuration = true
+    @AppStorage("showWordCount") private var showWordCount = true
 
     private var isPlaying: Bool {
         audioRecorder.isPlaying && audioRecorder.currentlyPlayingURL == recording.url
@@ -868,14 +871,28 @@ struct RecordingRow: View {
 
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(recording.timestamp, style: .date)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    if showRecordingDateTime {
+                        Text(recording.timestamp, style: .date)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
 
                     HStack(spacing: 4) {
-                        Text(recording.timestamp, style: .time)
-                        Text("·")
-                        Text(TextUtil.formatDuration(recording.duration))
+                        if showRecordingDateTime {
+                            Text(recording.timestamp, style: .time)
+                        }
+                        if showRecordingDuration {
+                            if showRecordingDateTime {
+                                Text("·")
+                            }
+                            Text(TextUtil.formatDuration(recording.duration))
+                        }
+                        if showWordCount {
+                            if showRecordingDateTime || showRecordingDuration {
+                                Text("·")
+                            }
+                            Text("^[\(TextUtil.wordCount(recording.transcription)) word](inflect: true)")
+                        }
                     }
                     .font(.caption)
                     .foregroundColor(.secondary)

@@ -71,6 +71,16 @@ final class AppPreferences {
     
     @UserDefault(key: "showTimestamps", defaultValue: false)
     var showTimestamps: Bool
+
+    // History list display
+    @UserDefault(key: "showRecordingDateTime", defaultValue: true)
+    var showRecordingDateTime: Bool
+
+    @UserDefault(key: "showRecordingDuration", defaultValue: true)
+    var showRecordingDuration: Bool
+
+    @UserDefault(key: "showWordCount", defaultValue: true)
+    var showWordCount: Bool
     
     @UserDefault(key: "temperature", defaultValue: 0.0)
     var temperature: Double
