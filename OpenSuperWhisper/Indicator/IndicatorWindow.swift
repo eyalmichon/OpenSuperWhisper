@@ -180,6 +180,15 @@ class IndicatorViewModel: ObservableObject {
                         await MainActor.run {
                             self.showWarning(title: "No speech detected", hint: "Check your mic")
                         }
+                    } else if AppPreferences.shared.warnOnLowAudio && self.recorder.wasLastRecordingTooQuiet {
+                        // Near-silent input makes Whisper hallucinate punctuation
+                        // (e.g. a lone "."). Discard it instead of pasting/saving
+                        // junk, and warn the user to raise their input volume.
+                        try? FileManager.default.removeItem(at: tempURL)
+                        print("Audio too quiet, dictation discarded")
+                        await MainActor.run {
+                            self.showWarning(title: "Audio too quiet", hint: "Raise input volume")
+                        }
                     } else {
                         let timestamp = Date()
                         let fileName = "\(Int(timestamp.timeIntervalSince1970)).wav"
@@ -205,11 +214,7 @@ class IndicatorViewModel: ObservableObject {
                         print("Transcription result: \(text)")
                         
                         await MainActor.run {
-                            if AppPreferences.shared.warnOnLowAudio && self.recorder.wasLastRecordingTooQuiet {
-                                self.showWarning(title: "Audio too quiet", hint: "Raise input volume")
-                            } else {
-                                self.delegate?.didFinishDecoding()
-                            }
+                            self.delegate?.didFinishDecoding()
                         }
                     }
                 } catch {
