@@ -2,13 +2,14 @@ import Cocoa
 import Combine
 import SwiftUI
 
-enum RecordingState {
+enum RecordingState: Equatable {
     case idle
     case connecting
     case recording
     case decoding
     case busy
     case noMicrophone
+    case warning(title: String, hint: String?)
 }
 
 @MainActor
@@ -84,6 +85,10 @@ class IndicatorViewModel: ObservableObject {
                 self?.delegate?.didFinishDecoding()
             }
         }
+    }
+
+    func showWarning(title: String, hint: String? = nil) {
+        showAutoDismissingMessage(.warning(title: title, hint: hint))
     }
 
     func startRecording() {
@@ -172,6 +177,9 @@ class IndicatorViewModel: ObservableObject {
                     if text.isEmpty {
                         try? FileManager.default.removeItem(at: tempURL)
                         print("No speech detected, dictation discarded")
+                        await MainActor.run {
+                            self.showWarning(title: "No speech detected", hint: "Check your mic")
+                        }
                     } else {
                         let timestamp = Date()
                         let fileName = "\(Int(timestamp.timeIntervalSince1970)).wav"
@@ -195,14 +203,21 @@ class IndicatorViewModel: ObservableObject {
                         
                         insertText(text)
                         print("Transcription result: \(text)")
+                        
+                        await MainActor.run {
+                            if AppPreferences.shared.warnOnLowAudio && self.recorder.wasLastRecordingTooQuiet {
+                                self.showWarning(title: "Audio too quiet", hint: "Raise input volume")
+                            } else {
+                                self.delegate?.didFinishDecoding()
+                            }
+                        }
                     }
                 } catch {
                     print("Error transcribing audio: \(error)")
                     try? FileManager.default.removeItem(at: tempURL)
-                }
-                
-                await MainActor.run {
-                    self.delegate?.didFinishDecoding()
+                    await MainActor.run {
+                        self.delegate?.didFinishDecoding()
+                    }
                 }
             } else {
                 print("!!! Not found record url !!!")
@@ -410,12 +425,36 @@ struct IndicatorWindow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            case .warning(let title, let hint):
+                HStack(spacing: 8) {
+                    Image(systemName: "mic.slash.fill")
+                        .foregroundColor(.orange)
+                        .frame(width: 24)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .lineLimit(1)
+                        if let hint {
+                            Text(hint)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+
             case .idle:
                 EmptyView()
             }
         }
         .padding(.horizontal, 24)
-        .frame(height: Self.cardSize.height)
+        // minHeight (not a fixed height) so the two-line low-audio warning can
+        // grow within the taller window; single-line states stay at cardSize.
+        .frame(minHeight: Self.cardSize.height)
         .background {
             rect
                 .fill(backgroundColor)

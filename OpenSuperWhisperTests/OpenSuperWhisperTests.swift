@@ -1956,3 +1956,55 @@ final class MouseButtonTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Metering Lifecycle Tests (Bugbot finding validation)
+
+final class MeteringLifecycleTests: XCTestCase {
+
+    private func makeDummyRecorder() throws -> AVAudioRecorder {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("metering-test-\(UUID().uuidString).caf")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16
+        ]
+        return try AVAudioRecorder(url: url, settings: settings)
+    }
+
+    /// Sanity check: the metering start/stop mechanism itself works. This
+    /// isolates the delegate as the specific gap in the failing test below.
+    func testStartStopMeteringTogglesFlag() {
+        let recorder = AudioRecorder.shared
+        recorder.stopMetering()
+        XCTAssertFalse(recorder.isMetering)
+
+        recorder.startMetering()
+        XCTAssertTrue(recorder.isMetering)
+
+        recorder.stopMetering()
+        XCTAssertFalse(recorder.isMetering)
+    }
+
+    /// Bugbot finding: `audioRecorderDidFinishRecording` never calls
+    /// `stopMetering()`, so a recording that ends on its own (system-initiated,
+    /// without going through `stopRecording()`/`cancelRecording()`) leaves the
+    /// metering timer running forever.
+    func testMeteringStopsWhenRecorderFinishesViaDelegate() throws {
+        let recorder = AudioRecorder.shared
+        defer { recorder.stopMetering() }
+
+        recorder.startMetering()
+        XCTAssertTrue(recorder.isMetering, "Precondition: metering should be running")
+
+        // Simulate a system-initiated finish: only the delegate fires.
+        let dummy = try makeDummyRecorder()
+        recorder.audioRecorderDidFinishRecording(dummy, successfully: true)
+
+        XCTAssertFalse(
+            recorder.isMetering,
+            "Metering timer must stop when the recording finishes via the delegate"
+        )
+    }
+}

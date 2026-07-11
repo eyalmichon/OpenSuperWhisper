@@ -32,6 +32,26 @@ class AudioRecorder: NSObject, ObservableObject {
     private var recordingDeviceID: AudioDeviceID?
     private var previousDefaultInputDeviceID: AudioDeviceID?
 
+    // MARK: - Input level monitoring
+
+    /// Peak power (in dBFS, range ~ -160...0) captured during the current/last recording.
+    private(set) var maxPeakPower: Float = AudioRecorder.silencePower
+    private var meteringTimer: DispatchSourceTimer?
+    private let meteringLock = NSLock()
+
+    /// Whether the input-level metering timer is currently active.
+    var isMetering: Bool { meteringTimer != nil }
+
+    /// Peak levels below this (in dBFS) indicate the mic captured little to no signal.
+    static let lowAudioPeakThreshold: Float = -40.0
+    private static let silencePower: Float = -160.0
+
+    /// Whether the most recent recording was too quiet to likely produce a transcription.
+    var wasLastRecordingTooQuiet: Bool {
+        meteringLock.lock(); defer { meteringLock.unlock() }
+        return maxPeakPower < Self.lowAudioPeakThreshold
+    }
+
     // MARK: - Singleton Instance
 
     static let shared = AudioRecorder()
@@ -196,8 +216,9 @@ class AudioRecorder: NSObject, ObservableObject {
         do {
             audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
             audioRecorder?.delegate = self
-            audioRecorder?.isMeteringEnabled = monitorConnection
+            audioRecorder?.isMeteringEnabled = true
             audioRecorder?.record()
+            startMetering()
             if monitorConnection {
                 startConnectionMonitoring()
             } else {
@@ -226,6 +247,7 @@ class AudioRecorder: NSObject, ObservableObject {
                 self.audioRecorder = nil
                 self.currentRecordingURL = nil
                 self.stopConnectionMonitoring()
+                self.stopMetering()
                 self.updateRecordingState(isRecording: false, isConnecting: false)
                 
                 self.workQueue.asyncAfter(deadline: .now() + Self.stopTailDuration) {
@@ -259,6 +281,7 @@ class AudioRecorder: NSObject, ObservableObject {
         audioRecorder?.stop()
         audioRecorder = nil
         stopConnectionMonitoring()
+        stopMetering()
         restoreSystemDefaultInputIfNeeded()
         updateRecordingState(isRecording: false, isConnecting: false)
         
@@ -376,10 +399,42 @@ class AudioRecorder: NSObject, ObservableObject {
         connectionCheckTimer?.cancel()
         connectionCheckTimer = nil
     }
+
+    func startMetering() {
+        stopMetering()
+
+        meteringLock.lock()
+        maxPeakPower = Self.silencePower
+        meteringLock.unlock()
+
+        // Run on the recorder's work queue: AVAudioRecorder is not thread-safe
+        // and record()/stop()/performStop() all run on workQueue, so metering's
+        // updateMeters()/peakPower() must too, to avoid a data race.
+        let timer = DispatchSource.makeTimerSource(queue: workQueue)
+        timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+        timer.setEventHandler { [weak self] in
+            guard let self = self, let recorder = self.audioRecorder, recorder.isRecording else { return }
+            recorder.updateMeters()
+            let peak = recorder.peakPower(forChannel: 0)
+            self.meteringLock.lock()
+            if peak > self.maxPeakPower {
+                self.maxPeakPower = peak
+            }
+            self.meteringLock.unlock()
+        }
+        meteringTimer = timer
+        timer.resume()
+    }
+
+    func stopMetering() {
+        meteringTimer?.cancel()
+        meteringTimer = nil
+    }
 }
 
 extension AudioRecorder: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        stopMetering()
         guard !flag else { return }
         workQueue.async {
             guard recorder === self.audioRecorder else { return }

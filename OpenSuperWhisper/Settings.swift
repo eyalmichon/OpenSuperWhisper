@@ -135,6 +135,12 @@ class SettingsViewModel: ObservableObject {
             AppPreferences.shared.playSoundOnRecordStart = playSoundOnRecordStart
         }
     }
+
+    @Published var warnOnLowAudio: Bool {
+        didSet {
+            AppPreferences.shared.warnOnLowAudio = warnOnLowAudio
+        }
+    }
     
     @Published var useAsianAutocorrect: Bool {
         didSet {
@@ -216,6 +222,7 @@ class SettingsViewModel: ObservableObject {
         self.beamSize = prefs.beamSize
         self.debugMode = prefs.debugMode
         self.playSoundOnRecordStart = prefs.playSoundOnRecordStart
+        self.warnOnLowAudio = prefs.warnOnLowAudio
         self.useAsianAutocorrect = prefs.useAsianAutocorrect
         self.modifierOnlyHotkey = ModifierKey(rawValue: prefs.modifierOnlyHotkey) ?? .none
         self.mouseButtonHotkey = MouseButton(rawValue: prefs.mouseButtonHotkey) ?? .none
@@ -653,11 +660,54 @@ struct Settings {
 
 struct SettingsView: View {
     @StateObject private var viewModel = SettingsViewModel()
+    @StateObject private var micMonitor = MicLevelMonitor()
+    @ObservedObject private var recorder = AudioRecorder.shared
     @StateObject private var permissionsManager = PermissionsManager()
     @Environment(\.dismiss) var dismiss
     @State private var isRecordingNewShortcut = false
     @State private var selectedTab = 0
     @State private var previousModelURL: URL?
+    @State private var inputVolume: Double = 0
+    @State private var inputVolumeSupported = false
+
+    /// Runs the live input meter only while the Audio tab is visible AND no
+    /// recording is in progress, so the Settings `AVAudioEngine` tap never
+    /// competes with the recorder's `AVAudioRecorder` for the input device.
+    private func syncMicMonitor() {
+        if selectedTab == 4 && !recorder.isRecording {
+            micMonitor.start()
+        } else {
+            micMonitor.stop()
+        }
+    }
+
+    private func refreshInputVolume() {
+        guard let mic = MicrophoneService.shared.getActiveMicrophone() else {
+            inputVolumeSupported = false
+            return
+        }
+        inputVolumeSupported = MicrophoneService.shared.isInputVolumeSettable(for: mic)
+        if let volume = MicrophoneService.shared.getInputVolume(for: mic) {
+            inputVolume = Double(volume)
+        }
+    }
+
+    private func commitInputVolume(_ value: Double) {
+        guard inputVolumeSupported, let mic = MicrophoneService.shared.getActiveMicrophone() else { return }
+        _ = MicrophoneService.shared.setInputVolume(Float(value), for: mic)
+    }
+
+    private func openSoundInputSettings() {
+        let candidates = [
+            "x-apple.systempreferences:com.apple.Sound-Settings.extension",
+            "x-apple.systempreferences:com.apple.preference.sound"
+        ]
+        for candidate in candidates {
+            if let url = URL(string: candidate), NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+    }
     
     private var sheetSize: CGSize {
         let visibleFrame = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 800)
@@ -688,7 +738,14 @@ struct SettingsView: View {
                     Label("Transcription", systemImage: "text.bubble")
                 }
                 .tag(2)
-            
+
+            // Audio Settings
+            audioSettings
+                .tabItem {
+                    Label("Audio", systemImage: "mic")
+                }
+                .tag(4)
+
             // Advanced Settings
             advancedSettings
                 .tabItem {
@@ -733,6 +790,26 @@ struct SettingsView: View {
             if viewModel.selectedEngine == "fluidaudio" {
                 viewModel.initializeFluidAudioModels()
             }
+            if selectedTab == 4 {
+                refreshInputVolume()
+            }
+            syncMicMonitor()
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            // TabView doesn't reliably fire onAppear/onDisappear per tab, so
+            // drive the mic monitor off the selected tab (Audio == tag 4).
+            if newTab == 4 {
+                refreshInputVolume()
+            }
+            syncMicMonitor()
+        }
+        .onChange(of: recorder.isRecording) { _, _ in
+            // Pause the input meter while a recording is capturing the mic and
+            // resume it when recording stops (if still on the Audio tab).
+            syncMicMonitor()
+        }
+        .onDisappear {
+            micMonitor.stop()
         }
         .onChange(of: viewModel.selectedEngine) { _, newEngine in
             if newEngine == "fluidaudio" {
@@ -1414,6 +1491,86 @@ struct SettingsView: View {
                         Toggle("", isOn: $viewModel.startHiddenInMenuBar)
                             .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
                             .labelsHidden()
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.controlBackgroundColor).opacity(0.3))
+                .cornerRadius(12)
+            }
+            .padding()
+        }
+    }
+
+    private var audioSettings: some View {
+        Form {
+            VStack(spacing: 20) {
+                // Microphone
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Microphone")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Input level")
+                                .font(.subheadline)
+                            Text("Speak to test your mic. Keep the bar past the marker.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            MicLevelMeter(monitor: micMonitor)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Input volume")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(Int((inputVolume * 100).rounded()))%")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                            }
+                            HStack(spacing: 8) {
+                                Image(systemName: "speaker.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $inputVolume, in: 0...1)
+                                    .disabled(!inputVolumeSupported)
+                                Image(systemName: "speaker.wave.3.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(inputVolumeSupported
+                                 ? "Same as the Input volume slider in System Settings > Sound."
+                                 : "This microphone doesn't support volume control.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .onChange(of: inputVolume) { _, newValue in
+                            commitInputVolume(newValue)
+                        }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Warn when audio is too quiet")
+                                    .font(.subheadline)
+                                Text("Show a warning after recording if the mic level was too low")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $viewModel.warnOnLowAudio)
+                                .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
+                                .labelsHidden()
+                        }
+
+                        Button {
+                            openSoundInputSettings()
+                        } label: {
+                            Label("Open Sound Settings", systemImage: "speaker.wave.2")
+                        }
+                        .controlSize(.small)
                     }
                 }
                 .padding()
