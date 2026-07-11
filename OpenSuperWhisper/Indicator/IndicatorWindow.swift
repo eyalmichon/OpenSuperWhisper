@@ -441,11 +441,13 @@ struct IndicatorWindow: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(.orange)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                         if let hint {
                             Text(hint)
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                         }
                     }
                 }
