@@ -20,6 +20,8 @@ class ShortcutManager {
     private var holdMode = false
     private var useModifierOnlyHotkey = false
     private var useMouseButtonHotkey = false
+    private var lastPressDownTime: CFAbsoluteTime = 0
+    private var pressConsumed = false
 
     private init() {
         print("ShortcutManager init")
@@ -62,8 +64,7 @@ class ShortcutManager {
 
         KeyboardShortcuts.onKeyUp(for: .escape) { [weak self] in
             Task { @MainActor in
-                if self?.activeVm != nil {
-                    IndicatorWindowManager.shared.stopForce()
+                if self?.activeVm != nil, IndicatorWindowManager.shared.requestCancel() {
                     self?.activeVm = nil
                 }
             }
@@ -109,8 +110,10 @@ class ShortcutManager {
                 self?.handleKeyUp()
             }
 
+            lastPressDownTime = 0
+            pressConsumed = false
             ModifierKeyMonitor.shared.start(modifierKey: modifierKey)
-            print("ShortcutManager: Using modifier-only hotkey: \(modifierKey.displayName)")
+            print("ShortcutManager: Using modifier-only hotkey: \(modifierKey.displayName) (double-press: \(AppPreferences.shared.doublePressToTrigger))")
         } else {
             useMouseButtonHotkey = false
             useModifierOnlyHotkey = false
@@ -122,28 +125,48 @@ class ShortcutManager {
     private func handleKeyDown() {
         holdWorkItem?.cancel()
         holdMode = false
-        
+
+        // Require a double-tap only when starting a new recording. Once recording is
+        // active, a single press stops it so the user isn't forced to double-tap again.
+        if AppPreferences.shared.doublePressToTrigger && activeVm == nil {
+            let now = CFAbsoluteTimeGetCurrent()
+            let threshold = NSEvent.doubleClickInterval
+            if lastPressDownTime > 0 && now - lastPressDownTime <= threshold {
+                lastPressDownTime = 0
+            } else {
+                lastPressDownTime = now
+                pressConsumed = false
+                return
+            }
+        }
+        pressConsumed = true
+
         let holdToRecordEnabled = AppPreferences.shared.holdToRecord
-        
+        let isStartingRecording = activeVm == nil
+
         Task { @MainActor in
             if self.activeVm == nil {
-                let cursorPosition = FocusUtils.getCurrentCursorPosition()
-                let indicatorPoint: NSPoint?
-                if let caret = FocusUtils.getCaretRect() {
-                    indicatorPoint = FocusUtils.convertAXPointToCocoa(caret.origin)
-                } else {
-                    indicatorPoint = cursorPosition
-                }
-                let vm = IndicatorWindowManager.shared.show(nearPoint: indicatorPoint)
+                // Start recording immediately: resolving the caret position talks to
+                // the focused app via AX IPC and can hang for seconds if that app
+                // is busy — the first words must not be lost because of it.
+                let vm = IndicatorWindowManager.shared.prepare()
                 vm.startRecording()
                 self.activeVm = vm
+                
+                let cursorPosition = FocusUtils.getCurrentCursorPosition()
+                let anchorPoint = await Self.resolveAnchorPoint(timeoutNanoseconds: 150_000_000)
+                let indicatorPoint = anchorPoint ?? cursorPosition
+                
+                IndicatorWindowManager.shared.presentWindow(for: vm, nearPoint: indicatorPoint)
             } else if !self.holdMode {
                 IndicatorWindowManager.shared.stopRecording()
                 self.activeVm = nil
             }
         }
-        
-        if holdToRecordEnabled {
+
+        // Arm hold mode only when this press starts a recording. Arming it on the
+        // stopping press would trigger a second stop on key-up.
+        if holdToRecordEnabled && isStartingRecording {
             let workItem = DispatchWorkItem { [weak self] in
                 self?.holdMode = true
             }
@@ -151,19 +174,53 @@ class ShortcutManager {
             DispatchQueue.main.asyncAfter(deadline: .now() + holdThreshold, execute: workItem)
         }
     }
-    
+
+    /// Resolves the input anchor without letting a slow focused app delay the
+    /// indicator: whichever finishes first wins — the AX resolution or the
+    /// deadline. On timeout the caller falls back to the mouse position; the
+    /// late AX result is simply discarded.
+    private static func resolveAnchorPoint(timeoutNanoseconds: UInt64) async -> NSPoint? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<NSPoint?, Never>) in
+            let gate = AnchorGate(continuation)
+            Task.detached {
+                let point = FocusUtils.getInputAnchorPoint()
+                await gate.resume(point)
+            }
+            Task.detached {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                await gate.resume(nil)
+            }
+        }
+    }
+
+    private actor AnchorGate {
+        private var continuation: CheckedContinuation<NSPoint?, Never>?
+
+        init(_ continuation: CheckedContinuation<NSPoint?, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(_ value: NSPoint?) {
+            continuation?.resume(returning: value)
+            continuation = nil
+        }
+    }
+
     private func handleKeyUp() {
         holdWorkItem?.cancel()
         holdWorkItem = nil
-        
+
+        guard pressConsumed else { return }
+        pressConsumed = false
+
         let holdToRecordEnabled = AppPreferences.shared.holdToRecord
-        
+
         Task { @MainActor in
-            if holdToRecordEnabled && self.holdMode {
+            if holdToRecordEnabled && self.holdMode && self.activeVm != nil {
                 IndicatorWindowManager.shared.stopRecording()
                 self.activeVm = nil
-                self.holdMode = false
             }
+            self.holdMode = false
         }
     }
 }

@@ -315,7 +315,10 @@ class MicrophoneService: ObservableObject {
         guard let deviceID = getCoreAudioDeviceID(for: device) else {
             return false
         }
-        
+        return setSystemDefaultInputDevice(deviceID)
+    }
+    
+    func setSystemDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -428,6 +431,31 @@ class MicrophoneService: ObservableObject {
         return status == noErr
     }
     
+    func isInputVolumeSettable(for deviceID: AudioDeviceID) -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: 1
+        )
+
+        var hasProperty = AudioObjectHasProperty(deviceID, &propertyAddress)
+        if !hasProperty {
+            propertyAddress.mElement = kAudioObjectPropertyElementMain
+            hasProperty = AudioObjectHasProperty(deviceID, &propertyAddress)
+        }
+
+        guard hasProperty else { return false }
+
+        var isSettable: DarwinBoolean = false
+        let status = AudioObjectIsPropertySettable(deviceID, &propertyAddress, &isSettable)
+        return status == noErr && isSettable.boolValue
+    }
+
+    func isInputVolumeSettable(for device: AudioDevice) -> Bool {
+        guard let deviceID = getCoreAudioDeviceID(for: device) else { return false }
+        return isInputVolumeSettable(for: deviceID)
+    }
+
     func getInputVolume(for device: AudioDevice) -> Float? {
         guard let deviceID = getCoreAudioDeviceID(for: device) else {
             return nil
